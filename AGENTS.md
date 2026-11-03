@@ -16,10 +16,11 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
 
 - CMake + MSVC x64：`cmake -S Explorer -B build && cmake --build build --config Release`。
   产物路径是 Ruslan `build-msix.ps1` 的对接契约（`build/Release/RsShell.Explorer.dll`）。
-- **换应用的调整面**（全部集中，除此之外零改动）：`Explorer/Target.h` 两个宏
-  （AUMID AppId 段 + 菜单显示名，须与消费方清单 `<Application Id>` 一致）、
-  替换 `Explorer.ico`、消费方 AppxManifest 声明。`Resource.rc` 菜单文案是
-  `%1!s!` 模板，运行时 FormatMessage 插入 Target.h 显示名，**永不随应用改**。
+- **换应用的调整面**（全部集中在 `Explorer/Resource.rc`，除此之外零改动）：
+  两张语言表的菜单文案（产品名可按语言不同）与 AppId（两表同值，= 消费方清单
+  `<Application Id>`，`Invoke` 经 LoadString 运行时取用）、`IDI_APP` 的图标文件。
+  **LoadString 无跨语言回退**（zh 线程命中 zh 表后同区块缺 ID 即失败），语言无关
+  的字符串必须每张表都放。
 - DLL 版本号唯一来源是 `Explorer/Version.h`（VERSIONINFO 资源），独立于消费方
   应用版本，发布变更时递增。
 - 开发坑：Explorer 对 title/icon/state 缓存凶，迭代改资源后需重启 explorer 验证；
