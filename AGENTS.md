@@ -17,7 +17,8 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
 - CMake + MSVC x64：`cmake -S Explorer -B build && cmake --build build --config Release`。
   产物路径是 Ruslan `build-msix.ps1` 的对接契约（`build/Release/RsShell.Explorer.dll`）。
 - 菜单文案/图标走 DLL 资源（Resource.rc 双语 STRINGTABLE + Explorer.ico）；
-  应用显示名变更须同步 `Resource.rc` 与消费方清单。
+  应用显示名变更须同步 `Resource.rc` 与消费方清单。DLL 版本号唯一来源是
+  `Explorer/Version.h`（VERSIONINFO 资源），独立于消费方应用版本，发布变更时递增。
 - 开发坑：Explorer 对 title/icon/state 缓存凶，迭代改资源后需重启 explorer 验证；
   此类扩展只能装上 MSIX 才生效，无松散测试捷径。
 - AUMID 的 AppId 段（`!Ruslan`）硬编码于 OpenInAppCommand.cpp，与 Ruslan 清单
