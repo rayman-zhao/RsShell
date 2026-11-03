@@ -1,0 +1,19 @@
+// UTF-8 源（含中文 STRINGTABLE），rc 须显式声明代码页
+#pragma code_page(65001)
+
+#include <windows.h>
+#include "ResourceIds.h"
+
+IDI_APP ICON "Explorer.ico"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+STRINGTABLE
+BEGIN
+    IDS_CMD_TITLE "Open in Motic DSAssistant Evo"
+END
+
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+STRINGTABLE
+BEGIN
+    IDS_CMD_TITLE "用 Motic DSAssistant Evo 打开"
+END
