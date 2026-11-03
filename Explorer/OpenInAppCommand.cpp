@@ -8,6 +8,7 @@
 
 #include "OpenInAppCommand.h"
 #include "ResourceIds.h"
+#include "Target.h"
 
 namespace {
 
@@ -19,11 +20,24 @@ HMODULE SelfModule() noexcept {
     return module;
 }
 
-bool LoadCommandString(UINT id, LPWSTR* out) {
-    wchar_t buffer[256] = {};
-    const int length = LoadStringW(SelfModule(), id, buffer, ARRAYSIZE(buffer));
-    if (length <= 0) return false;
-    return SUCCEEDED(SHStrDupW(buffer, out));
+// 模板（含 %1!s! 插槽）与 Target.h 的应用显示名合成菜单文案
+HRESULT ComposeTitle(LPWSTR* out) {
+    wchar_t format[256] = {};
+    if (LoadStringW(SelfModule(), IDS_CMD_TITLE, format, ARRAYSIZE(format)) <= 0) {
+        return E_FAIL;
+    }
+    wchar_t* arguments[1] = {const_cast<wchar_t*>(RSSHELL_TARGET_DISPLAY_NAME)};
+    LPWSTR composed = nullptr;
+    if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_STRING
+                           | FORMAT_MESSAGE_ARGUMENT_ARRAY,
+                       format, 0, 0, reinterpret_cast<LPWSTR>(&composed), 0,
+                       reinterpret_cast<va_list*>(arguments))
+        == 0) {
+        return E_FAIL;
+    }
+    const HRESULT hr = SHStrDupW(composed, out);
+    LocalFree(composed);
+    return hr;
 }
 
 // CommandLineToArgvW 的 CRT 规则：参数内的反斜杠只在紧邻引号时才要翻倍，
@@ -116,7 +130,7 @@ STDMETHODIMP_(ULONG) OpenInAppCommand::Release() {
 STDMETHODIMP OpenInAppCommand::GetTitle(IShellItemArray*, LPWSTR* ppszName) {
     if (!ppszName) return E_POINTER;
     *ppszName = nullptr;
-    return LoadCommandString(IDS_CMD_TITLE, ppszName) ? S_OK : E_FAIL;
+    return ComposeTitle(ppszName);
 }
 
 STDMETHODIMP OpenInAppCommand::GetIcon(IShellItemArray*, LPWSTR* ppszIcon) {
@@ -157,7 +171,7 @@ STDMETHODIMP OpenInAppCommand::Invoke(IShellItemArray* psiItemArray, IBindCtx*) 
     wchar_t familyName[PACKAGE_FAMILY_NAME_MAX_LENGTH + 1] = {};
     UINT32 length = ARRAYSIZE(familyName);
     if (FAILED(GetCurrentPackageFamilyName(&length, familyName))) return E_FAIL;
-    const std::wstring aumid = std::wstring(familyName) + L"!Ruslan";
+    const std::wstring aumid = std::wstring(familyName) + L"!" + RSSHELL_TARGET_APP_ID;
 
     IApplicationActivationManager* manager = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_ApplicationActivationManager, nullptr,
