@@ -9,8 +9,10 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
   自身无业务逻辑；语义路由全部在主应用侧完成（Ruslan 的激活参数解析）。
 - 注册不属于本仓：COM 类与 verb 声明在**消费方**的 AppxManifest（Ruslan `MSIX/AppxManifest.xml`），
   本仓只出 DLL。CLSID 固定通用——MSIX 的 COM 注册按包隔离，多包并存不冲突，消费方照抄即可。
-- **语言边界**：本仓不链任何 Swift 产物。将来缩略图 handler 的解码在 RsSlide（Swift），
-  DLL 内不可直接调用——届时走子进程出图/主应用预生成缓存，策略另行决策。
+- **语言边界**：与 Swift 侧经 **C ABI** 互操作（不用完整 C++ interop）。缩略图/预览的
+  解码在 RsSlide（Swift）——由独立 Swift shim DLL 暴露 `@_cdecl` 出图函数，本仓 DLL
+  动态加载（LoadLibrary）调用，shim 缺失时优雅降级默认图标（2026-11-03 定向；不借道
+  主应用出图，Java rjslide 仅作批量预生成备选）。Swift 运行时随消费方包分发。
 
 ## 构建与约定
 
