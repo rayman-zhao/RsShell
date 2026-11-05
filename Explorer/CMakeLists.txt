@@ -8,10 +8,7 @@ add_library(RsShell.Explorer SHARED
     RsShell.Explorer.def)
 
 set_target_properties(RsShell.Explorer PROPERTIES
-    OUTPUT_NAME "RsShell.Explorer"
-    # 静态 CRT：包内 surrogate 加载时不可依赖框架包里的动态 CRT
-    # （清单的 VCLibs.140.00 只有 *_app.dll，普通名在 .UWPDesktop 变体）
-    MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    OUTPUT_NAME "RsShell.Explorer")
 
 target_compile_definitions(RsShell.Explorer PRIVATE
     _WIN32_WINNT=0x0A00
