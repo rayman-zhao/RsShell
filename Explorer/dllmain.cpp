@@ -49,7 +49,7 @@ Factory g_factory;
 
 }  // namespace
 
-STDAPI DllGetClassFactory(REFCLSID rclsid, REFIID riid, void** ppv) {
+STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     if (!IsEqualCLSID(rclsid, CLSID_OpenInAppCommand)) return CLASS_E_CLASSNOTAVAILABLE;
     return g_factory.QueryInterface(riid, ppv);
