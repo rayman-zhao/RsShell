@@ -309,30 +309,34 @@ int RunPreviewFlow(DllGetClassObjectFn getClassObject, const Options& opt) {
         return 1;
     }
 
-    RECT clientRect = {};
-    GetClientRect(previewWindow, &clientRect);
-    const int captureW = clientRect.right - clientRect.left;
-    const int captureH = clientRect.bottom - clientRect.top;
-    HDC screen = GetDC(nullptr);
-    HDC memory = CreateCompatibleDC(screen);
-    HBITMAP capture = CreateCompatibleBitmap(screen, captureW, captureH);
-    HBITMAP oldCapture = static_cast<HBITMAP>(SelectObject(memory, capture));
-    const BOOL printed = PrintWindow(previewWindow, memory, PW_CLIENTONLY);
-    SelectObject(memory, oldCapture);
-    DeleteDC(memory);
-    ReleaseDC(nullptr, screen);
-    Step(L"PrintWindow %ls (%dx%d)", printed ? L"OK" : L"FAIL", captureW, captureH);
+    // 抓客户区存 PNG（PrintWindow 走 WM_PRINTCLIENT，可重复用于 resize 后二次抓帧）
+    auto captureToPng = [&](const std::wstring& path) -> bool {
+        RECT rc = {};
+        GetClientRect(previewWindow, &rc);
+        const int w = rc.right - rc.left;
+        const int h = rc.bottom - rc.top;
+        HDC screen = GetDC(nullptr);
+        HDC memory = CreateCompatibleDC(screen);
+        HBITMAP shot = CreateCompatibleBitmap(screen, w, h);
+        HBITMAP oldShot = static_cast<HBITMAP>(SelectObject(memory, shot));
+        const BOOL printed = PrintWindow(previewWindow, memory, PW_CLIENTONLY);
+        SelectObject(memory, oldShot);
+        DeleteDC(memory);
+        ReleaseDC(nullptr, screen);
+        if (!printed) {
+            Step(L"FAIL: PrintWindow (%dx%d)", w, h);
+            DeleteObject(shot);
+            return false;
+        }
+        const HRESULT pngHr = SaveBitmapToPng(shot, path);
+        DeleteObject(shot);
+        Step(L"PrintWindow OK (%dx%d), save %s hr=0x%08lX", w, h, path.c_str(),
+             static_cast<unsigned long>(pngHr));
+        return SUCCEEDED(pngHr);
+    };
 
     int code = 0;
-    if (printed) {
-        hr = SaveBitmapToPng(capture, opt.outPng);
-        Step(L"save %s hr=0x%08lX", opt.outPng.c_str(), static_cast<unsigned long>(hr));
-        if (FAILED(hr)) code = 1;
-    } else {
-        Step(L"FAIL: PrintWindow");
-        code = 1;
-    }
-    DeleteObject(capture);
+    if (!captureToPng(opt.outPng)) code = 1;
 
     // 冒烟：焦点/按键转发（无 site 时 TranslateAccelerator 预期 S_FALSE）
     const HRESULT focusHr = preview->SetFocus();
@@ -344,6 +348,17 @@ int RunPreviewFlow(DllGetClassObjectFn getClassObject, const Options& opt) {
     const HRESULT accelHr = preview->TranslateAccelerator(&dummy);
     Step(L"SetFocus hr=0x%08lX QueryFocus hwnd=%p TranslateAccelerator hr=0x%08lX",
          static_cast<unsigned long>(focusHr), focused, static_cast<unsigned long>(accelHr));
+
+    // resize 阶段：SetRect 放大超阈值 → 250ms 防抖 → 会话内重取更匹配的图层
+    RECT large = {8, 8, 1508, 1108};
+    hr = preview->SetRect(&large);
+    Step(L"SetRect (enlarge, triggers debounce refetch) hr=0x%08lX",
+         static_cast<unsigned long>(hr));
+    const ULONGLONG tick3 = GetTickCount64();
+    PumpMessages(700);  // 覆盖防抖定时器 + 会话重取 + 重绘
+    Step(L"resize refetch (incl. 250ms debounce) in %lums",
+         static_cast<unsigned long>(GetTickCount64() - tick3));
+    if (!captureToPng(opt.outPng + L".resized.png")) code = 1;
 
     // 复用契约：Unload 后同实例可重新 Initialize + DoPreview
     hr = preview->Unload();

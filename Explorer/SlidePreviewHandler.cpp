@@ -10,6 +10,8 @@
 namespace {
 
 constexpr wchar_t kPreviewWindowClass[] = L"RsShell.SlidePreview";
+constexpr UINT_PTR kResizeRefetchTimer = 1;
+constexpr UINT kResizeRefetchDelay = 250;  // ms，拖动窗格分隔线时合并 SetRect 风暴
 
 HINSTANCE ModuleInstance() {
     HINSTANCE instance = nullptr;
@@ -62,6 +64,7 @@ SlidePreviewHandler::SlidePreviewHandler() { ModuleLockAdd(); }
 
 SlidePreviewHandler::~SlidePreviewHandler() {
     DestroyPreview();
+    CloseRasterSession();
     if (m_site) m_site->Release();
     if (m_frame) m_frame->Release();
 }
@@ -81,6 +84,12 @@ STDMETHODIMP SlidePreviewHandler::SetRect(const RECT* prc) {
     if (!prc) return E_INVALIDARG;
     m_rect = *prc;
     ApplyBounds();
+    // 尺寸显著变化（±25%）时防抖重取更匹配的图层；期间旧位图按新窗格拉伸占位
+    const UINT target = PaneMaxSize();
+    if (m_window && m_fetchedMaxSize > 0
+        && (target * 4 > m_fetchedMaxSize * 5 || m_fetchedMaxSize * 4 > target * 5)) {
+        SetTimer(m_window, kResizeRefetchTimer, kResizeRefetchDelay, nullptr);
+    }
     return S_OK;
 }
 
@@ -88,23 +97,11 @@ STDMETHODIMP SlidePreviewHandler::DoPreview() {
     if (m_path.empty() || !m_parent) return E_FAIL;
     DestroyPreview();  // 宿主未按契约先 Unload 的重入兜底
 
-    const LONG spanW = m_rect.right - m_rect.left;
-    const LONG spanH = m_rect.bottom - m_rect.top;
-    // maxSize 当前为 C ABI 保留参数（恒宏图原生分辨率），仅需 >0
-    const UINT32 maxSize = static_cast<UINT32>(std::max<LONG>({spanW, spanH, 1}));
-
-    BYTE* raster = nullptr;
-    UINT32 width = 0;
-    UINT32 height = 0;
-    HRESULT hr = RsSlidePreviewBitmap(m_path.c_str(), maxSize, &raster, &width, &height);
-    if (SUCCEEDED(hr) && raster && width > 0 && height > 0) {
-        hr = RasterToBitmap(raster, width, height, &m_bitmap);
-    } else {
-        hr = E_FAIL;
-    }
-    CoTaskMemFree(raster);
+    HRESULT hr = FetchPreviewBitmap(PaneMaxSize());
     if (FAILED(hr)) return hr;
 
+    const LONG spanW = m_rect.right - m_rect.left;
+    const LONG spanH = m_rect.bottom - m_rect.top;
     EnsureWindowClass();
     m_window = CreateWindowExW(0, kPreviewWindowClass, L"", WS_CHILD | WS_VISIBLE,
                                m_rect.left, m_rect.top, spanW, spanH, m_parent, nullptr,
@@ -117,8 +114,10 @@ STDMETHODIMP SlidePreviewHandler::DoPreview() {
 }
 
 STDMETHODIMP SlidePreviewHandler::Unload() {
-    DestroyPreview();
+    DestroyPreview();  // 窗口销毁连带其定时器
+    CloseRasterSession();  // TIFF 句柄随会话释放，文件锁解除
     m_path.clear();
+    m_fetchedMaxSize = 0;
     return S_OK;
 }
 
@@ -176,7 +175,9 @@ STDMETHODIMP SlidePreviewHandler::GetSite(REFIID riid, void** ppvSite) {
 
 STDMETHODIMP SlidePreviewHandler::Initialize(LPCWSTR pszFilePath, DWORD) {
     if (!pszFilePath || !*pszFilePath) return E_INVALIDARG;
+    CloseRasterSession();  // 会话绑定单一切片，换文件即作废
     m_path = pszFilePath;
+    m_fetchedMaxSize = 0;
     return S_OK;
 }
 
@@ -185,7 +186,9 @@ STDMETHODIMP SlidePreviewHandler::Initialize(IShellItem* psi, DWORD) {
     PWSTR path = nullptr;
     HRESULT hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &path);
     if (FAILED(hr) || !path) return FAILED(hr) ? hr : E_FAIL;
+    CloseRasterSession();
     m_path = path;
+    m_fetchedMaxSize = 0;
     CoTaskMemFree(path);
     return S_OK;
 }
@@ -216,6 +219,61 @@ void SlidePreviewHandler::DestroyPreview() {
     if (m_bitmap) {
         DeleteObject(m_bitmap);
         m_bitmap = nullptr;
+    }
+}
+
+void SlidePreviewHandler::CloseRasterSession() {
+    if (m_rasterSession) {
+        RsSlidePreviewRasterClose(m_rasterSession);
+        m_rasterSession = nullptr;
+    }
+}
+
+UINT SlidePreviewHandler::PaneMaxSize() const {
+    const LONG spanW = m_rect.right - m_rect.left;
+    const LONG spanH = m_rect.bottom - m_rect.top;
+    return static_cast<UINT>(std::max<LONG>({spanW, spanH, 1}));
+}
+
+// 金字塔会话取图（多通道伪彩色合成在 RsSlideCABI 侧）；失败（含打开失败、
+// 无金字塔只有底图的特例）回退宏图
+HRESULT SlidePreviewHandler::FetchPreviewBitmap(UINT maxSize) {
+    if (!m_rasterSession) {
+        RsSlidePreviewRasterOpen(m_path.c_str(), &m_rasterSession);
+    }
+
+    BYTE* raster = nullptr;
+    UINT32 width = 0;
+    UINT32 height = 0;
+    HRESULT hr = E_FAIL;
+    if (m_rasterSession) {
+        hr = RsSlidePreviewRaster(m_rasterSession, maxSize, &raster, &width, &height);
+        if (FAILED(hr) || !raster) hr = E_FAIL;
+    }
+    if (FAILED(hr)) {
+        raster = nullptr;
+        width = 0;
+        height = 0;
+        hr = RsSlidePreviewBitmap(m_path.c_str(), maxSize, &raster, &width, &height);
+        if (FAILED(hr) || !raster) hr = E_FAIL;
+    }
+    if (SUCCEEDED(hr)) {
+        HBITMAP fresh = nullptr;
+        hr = RasterToBitmap(raster, width, height, &fresh);
+        if (SUCCEEDED(hr)) {
+            if (m_bitmap) DeleteObject(m_bitmap);
+            m_bitmap = fresh;
+            m_fetchedMaxSize = maxSize;
+        }
+    }
+    CoTaskMemFree(raster);
+    return hr;
+}
+
+void SlidePreviewHandler::RefetchForNewSize() {
+    if (!m_window) return;
+    if (SUCCEEDED(FetchPreviewBitmap(PaneMaxSize()))) {
+        InvalidateRect(m_window, nullptr, FALSE);
     }
 }
 
@@ -298,6 +356,13 @@ LRESULT CALLBACK SlidePreviewHandler::WndProc(HWND hwnd, UINT msg, WPARAM wParam
     switch (msg) {
         case WM_ERASEBKGND:
             return 1;  // 背景并入 WM_PAINT 双缓冲
+        case WM_TIMER:
+            if (self && wParam == kResizeRefetchTimer) {
+                KillTimer(hwnd, kResizeRefetchTimer);
+                self->RefetchForNewSize();
+                return 0;
+            }
+            break;
         case WM_PAINT:
             if (self) {
                 self->Paint(hwnd);

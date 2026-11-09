@@ -8,8 +8,10 @@
 constexpr GUID CLSID_SlidePreviewHandler = {
     0xbc9e79fa, 0x7839, 0x44db, {0xbc, 0x76, 0x2d, 0xbb, 0xb9, 0x7c, 0x44, 0xc8}};
 
-// 数字切片预览窗格：IPreviewHandler 垫片。解码与缩略图同路走 RsSlidePreviewBitmap
-// 宏图直出（实测 15-266ms，同步 DoPreview 预算内），本类只做 Shell 窗口契约翻译。
+// 数字切片预览窗格：IPreviewHandler 垫片。解码走会话式金字塔取图
+// （RsSlidePreviewRaster*：明场 RGB 直转 / 多通道荧光逐通道伪彩色加色合成，
+// 合成在 RsSlideCABI 侧），窗格尺寸显著变化时防抖重取；失败回退宏图
+// RsSlidePreviewBitmap。本类只做 Shell 窗口契约翻译与位图呈现。
 // 初始化接口刻意只暴露 IInitializeWithFile/IInitializeWithItem——QI 勿加回
 // IInitializeWithStream：Shell 见 Stream 必选流式（官方文档/Toub 语义），而 GB 级
 // 切片与闭源厂商 DLL 只能按路径打开；缩略图侧隐藏 IThumbnailProvider 是同一教训。
@@ -54,6 +56,10 @@ class SlidePreviewHandler final : public IPreviewHandler,
 
     void ApplyBounds();
     void DestroyPreview();
+    void CloseRasterSession();
+    UINT PaneMaxSize() const;
+    HRESULT FetchPreviewBitmap(UINT maxSize);
+    void RefetchForNewSize();
     void Paint(HWND hwnd);
     void Render(HDC dc, int width, int height) const;
     static void EnsureWindowClass();
@@ -61,6 +67,8 @@ class SlidePreviewHandler final : public IPreviewHandler,
 
     volatile ULONG m_ref = 1;
     std::wstring m_path;
+    void* m_rasterSession = nullptr;
+    UINT m_fetchedMaxSize = 0;
     HWND m_parent = nullptr;
     RECT m_rect = {};
     HWND m_window = nullptr;
