@@ -1,10 +1,11 @@
-// RsShell.Explorer.dll — Explorer 上下文菜单与缩略图 COM 宿主。
+// RsShell.Explorer.dll — Explorer 上下文菜单、缩略图与预览窗格 COM 宿主。
 // 被包内 surrogate（dllhost）加载，不由 explorer.exe 直接加载。
 #include <windows.h>
 
 #include <new>
 
 #include "OpenInAppCommand.h"
+#include "SlidePreviewHandler.h"
 #include "SlideThumbnailProvider.h"
 
 static volatile LONG g_moduleLocks = 0;
@@ -59,6 +60,7 @@ class Factory final : public IClassFactory {
 
 Factory g_openInAppFactory{&CreateComObject<OpenInAppCommand>};
 Factory g_slideThumbnailFactory{&CreateComObject<SlideThumbnailProvider>};
+Factory g_slidePreviewFactory{&CreateComObject<SlidePreviewHandler>};
 
 }  // namespace
 
@@ -69,6 +71,8 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
         factory = &g_openInAppFactory;
     } else if (IsEqualCLSID(rclsid, CLSID_SlideThumbnailProvider)) {
         factory = &g_slideThumbnailFactory;
+    } else if (IsEqualCLSID(rclsid, CLSID_SlidePreviewHandler)) {
+        factory = &g_slidePreviewFactory;
     } else {
         return CLASS_E_CLASSNOTAVAILABLE;
     }

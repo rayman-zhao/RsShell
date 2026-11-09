@@ -4,6 +4,7 @@ project(RsShellExplorer VERSION 0.1.0 LANGUAGES CXX RC)
 add_library(RsShell.Explorer SHARED
     dllmain.cpp
     OpenInAppCommand.cpp
+    SlidePreviewHandler.cpp
     SlideThumbnailProvider.cpp
     Resource.rc
     RsShell.Explorer.def)
