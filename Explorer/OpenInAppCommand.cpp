@@ -87,6 +87,8 @@ std::wstring BuildArguments(IShellItemArray* items) {
 
 }  // namespace
 
+OpenInAppCommand::OpenInAppCommand() { ModuleLockAdd(); }
+
 STDMETHODIMP OpenInAppCommand::QueryInterface(REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     if (riid == IID_IUnknown || riid == IID_IExplorerCommand) {
