@@ -224,7 +224,7 @@ void SlidePreviewHandler::DestroyPreview() {
 
 void SlidePreviewHandler::CloseRasterSession() {
     if (m_rasterSession) {
-        RsSlidePreviewRasterClose(m_rasterSession);
+        RsSlideSessionClose(m_rasterSession);
         m_rasterSession = nullptr;
     }
 }
@@ -235,19 +235,20 @@ UINT SlidePreviewHandler::PaneMaxSize() const {
     return static_cast<UINT>(std::max<LONG>({spanW, spanH, 1}));
 }
 
-// 金字塔会话取图（多通道伪彩色合成在 RsSlideCABI 侧）；失败（含打开失败、
-// 无金字塔只有底图的特例）回退宏图
+// 金字塔会话取图（多通道伪彩色合成在 RsSlideCABI 侧，24bpp BGR）；失败（含打开
+// 失败、无金字塔只有底图的特例）回退宏图（32bpp BGRA）
 HRESULT SlidePreviewHandler::FetchPreviewBitmap(UINT maxSize) {
     if (!m_rasterSession) {
-        RsSlidePreviewRasterOpen(m_path.c_str(), &m_rasterSession);
+        RsSlideSessionOpen(m_path.c_str(), &m_rasterSession);
     }
 
     BYTE* raster = nullptr;
     UINT32 width = 0;
     UINT32 height = 0;
     HRESULT hr = E_FAIL;
+    WORD bitCount = 24;
     if (m_rasterSession) {
-        hr = RsSlidePreviewRaster(m_rasterSession, maxSize, &raster, &width, &height);
+        hr = RsSlideSessionThumbnailBitmap(m_rasterSession, maxSize, &raster, &width, &height);
         if (FAILED(hr) || !raster) hr = E_FAIL;
     }
     if (FAILED(hr)) {
@@ -256,10 +257,11 @@ HRESULT SlidePreviewHandler::FetchPreviewBitmap(UINT maxSize) {
         height = 0;
         hr = RsSlidePreviewBitmap(m_path.c_str(), maxSize, &raster, &width, &height);
         if (FAILED(hr) || !raster) hr = E_FAIL;
+        bitCount = 32;
     }
     if (SUCCEEDED(hr)) {
         HBITMAP fresh = nullptr;
-        hr = RasterToBitmap(raster, width, height, &fresh);
+        hr = RasterToBitmap(raster, width, height, bitCount, &fresh);
         if (SUCCEEDED(hr)) {
             if (m_bitmap) DeleteObject(m_bitmap);
             m_bitmap = fresh;

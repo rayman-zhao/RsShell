@@ -86,7 +86,7 @@ STDMETHODIMP SlideThumbnailProvider::Extract(HBITMAP* phBmpThumbnail) {
     UINT32 height = 0;
     HRESULT hr = RsSlidePreviewBitmap(m_path.c_str(), maxSize, &raster, &width, &height);
     if (SUCCEEDED(hr) && raster && width > 0 && height > 0) {
-        hr = RasterToBitmap(raster, width, height, phBmpThumbnail);
+        hr = RasterToBitmap(raster, width, height, 32, phBmpThumbnail);
     } else {
         hr = E_FAIL;
     }
