@@ -5,6 +5,7 @@ add_library(RsShell.Explorer SHARED
     dllmain.cpp
     OpenInAppCommand.cpp
     SlidePreviewHandler.cpp
+    SlidePropertyStore.cpp
     SlideThumbnailProvider.cpp
     Resource.rc
     RsShell.Explorer.def)
@@ -23,7 +24,8 @@ target_compile_definitions(RsShell.Explorer PRIVATE
 
 target_compile_options(RsShell.Explorer PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
 
-target_link_libraries(RsShell.Explorer PRIVATE ole32 shlwapi user32 gdi32)
+# propsys：PKEY_* 属性键常量
+target_link_libraries(RsShell.Explorer PRIVATE ole32 shlwapi user32 gdi32 propsys)
 
 # RsSlideCABI（Swift 动态库）的 import 库——缩略图解码为硬依赖，需先构建 RsSlide：
 #   cd ../RsSlide && swift build -c release --product RsSlideCABI
@@ -49,4 +51,5 @@ target_compile_definitions(RsShell.ThumbTest PRIVATE
 
 target_compile_options(RsShell.ThumbTest PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
 
-target_link_libraries(RsShell.ThumbTest PRIVATE ole32 shlwapi user32 gdi32 windowscodecs)
+# propsys：--props 模式打印用 PSGetNameFromKey/PSFormatForDisplay
+target_link_libraries(RsShell.ThumbTest PRIVATE ole32 shlwapi user32 gdi32 windowscodecs propsys)

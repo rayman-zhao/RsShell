@@ -1,16 +1,19 @@
-// 缩略图/预览窗格链路进程内测试台：不经 Explorer / 系统缩略图缓存 / surrogate，按
-// Shell 的真实调用顺序直接驱动 RsShell.Explorer.dll（缩略图：DllGetClassObject →
-// IPersistFile → IExtractImage；预览：DllGetClassObject → IInitializeWithFile →
-// IPreviewHandler），逐步打印 HRESULT 与耗时，结果位图落盘 PNG。
+// 缩略图/预览窗格/属性处理器链路进程内测试台：不经 Explorer / 系统缩略图缓存 /
+// surrogate，按 Shell 的真实调用顺序直接驱动 RsShell.Explorer.dll（缩略图：
+// DllGetClassObject → IPersistFile → IExtractImage；预览：DllGetClassObject →
+// IInitializeWithFile → IPreviewHandler；属性：DllGetClassObject →
+// IInitializeWithFile → IPropertyStore），逐步打印 HRESULT 与耗时，结果位图落盘 PNG。
 // 与 DLL 同目录需有 RsSlideCABI.dll（含 Swift 运行时），通常把本 exe 拷进消费方
 // 包根（build-msix.ps1 的 package 目录）或用 --dll 指过去。
-// 用法：RsShell.ThumbTest.exe <切片文件> [--preview] [--dll <RsShell.Explorer.dll>]
+// 用法：RsShell.ThumbTest.exe <切片文件> [--preview] [--props] [--dll <RsShell.Explorer.dll>]
 //       [--size N] [--out <png>]
 #include <windows.h>
 
 #include <fcntl.h>
 #include <io.h>
 #include <objbase.h>
+#include <propkey.h>
+#include <propsys.h>
 #include <shlwapi.h>
 #include <wincodec.h>
 
@@ -19,6 +22,7 @@
 #include <string>
 
 #include "SlidePreviewHandler.h"
+#include "SlidePropertyStore.h"
 #include "SlideThumbnailProvider.h"
 
 namespace {
@@ -29,10 +33,12 @@ struct Options {
     std::wstring outPng;
     UINT size = 256;
     bool preview = false;
+    bool props = false;
 };
 
 void PrintUsageAndExit(int code) {
-    wprintf(L"usage: RsShell.ThumbTest.exe <slide file> [--preview] [--dll <RsShell.Explorer.dll>]\n");
+    wprintf(
+        L"usage: RsShell.ThumbTest.exe <slide file> [--preview] [--props] [--dll <RsShell.Explorer.dll>]\n");
     wprintf(L"       [--size N] [--out <png>]\n");
     exit(code);
 }
@@ -45,6 +51,8 @@ Options ParseOptions(int argc, wchar_t** argv) {
             o.dllPath = argv[++i];
         } else if (arg == L"--preview") {
             o.preview = true;
+        } else if (arg == L"--props") {
+            o.props = true;
         } else if (arg == L"--size" && i + 1 < argc) {
             o.size = static_cast<UINT>(_wtoi(argv[++i]));
         } else if (arg == L"--out" && i + 1 < argc) {
@@ -376,6 +384,142 @@ int RunPreviewFlow(DllGetClassObjectFn getClassObject, const Options& opt) {
     return code;
 }
 
+int RunPropsFlow(DllGetClassObjectFn getClassObject, const Options& opt) {
+    IClassFactory* factory = nullptr;
+    HRESULT hr = getClassObject(CLSID_SlidePropertyStore, IID_PPV_ARGS(&factory));
+    Step(L"DllGetClassObject(CLSID_SlidePropertyStore) hr=0x%08lX", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) return 1;
+
+    IInitializeWithFile* fileInit = nullptr;
+    hr = factory->CreateInstance(nullptr, IID_PPV_ARGS(&fileInit));
+    Step(L"CreateInstance -> IInitializeWithFile hr=0x%08lX", static_cast<unsigned long>(hr));
+    factory->Release();
+    if (FAILED(hr)) return 1;
+
+    IPropertyStore* store = nullptr;
+    hr = fileInit->QueryInterface(IID_PPV_ARGS(&store));
+    Step(L"QI IPropertyStore hr=0x%08lX", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+        fileInit->Release();
+        return 1;
+    }
+    IPropertyStoreCapabilities* capabilities = nullptr;
+    hr = store->QueryInterface(IID_PPV_ARGS(&capabilities));
+    Step(L"QI IPropertyStoreCapabilities hr=0x%08lX", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+        store->Release();
+        fileInit->Release();
+        return 1;
+    }
+
+    // QI 契约反向验证：Stream/Item 必须不可达，否则 Shell 会改走流式/项式、路径就丢了
+    int code = 0;
+    for (const IID& probe : {IID_IInitializeWithStream, IID_IInitializeWithItem}) {
+        IUnknown* sink = nullptr;
+        const HRESULT probeHr = store->QueryInterface(probe, reinterpret_cast<void**>(&sink));
+        if (sink) sink->Release();
+        Step(L"QI %s (expect E_NOINTERFACE) hr=0x%08lX",
+             probe == IID_IInitializeWithStream ? L"IInitializeWithStream" : L"IInitializeWithItem",
+             static_cast<unsigned long>(probeHr));
+        if (SUCCEEDED(probeHr)) {
+            Step(L"FAIL: %s must not be exposed",
+                 probe == IID_IInitializeWithStream ? L"IInitializeWithStream" : L"IInitializeWithItem");
+            code = 1;
+        }
+    }
+    if (code != 0) {
+        capabilities->Release();
+        store->Release();
+        fileInit->Release();
+        return code;
+    }
+
+    hr = fileInit->Initialize(opt.slide.c_str(), STGM_READ);
+    Step(L"IInitializeWithFile::Initialize hr=0x%08lX", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+        store->Release();
+        fileInit->Release();
+        return 1;
+    }
+
+    // 首 GetValue 即懒解析（一次 makeSlide 纯标签遍历），计时即元数据成本
+    PROPVARIANT first = {};
+    const ULONGLONG tick = GetTickCount64();
+    hr = store->GetValue(PKEY_Image_HorizontalSize, &first);
+    Step(L"first GetValue (lazy parse) hr=0x%08lX in %lums", static_cast<unsigned long>(hr),
+         static_cast<unsigned long>(GetTickCount64() - tick));
+    PropVariantClear(&first);
+    if (FAILED(hr)) {
+        capabilities->Release();
+        store->Release();
+        fileInit->Release();
+        return 1;
+    }
+
+    DWORD count = 0;
+    hr = store->GetCount(&count);
+    Step(L"GetCount hr=0x%08lX count=%lu", static_cast<unsigned long>(hr), count);
+    for (DWORD i = 0; i < count; ++i) {
+        PROPERTYKEY key = {};
+        PROPVARIANT value = {};
+        if (FAILED(store->GetAt(i, &key)) || FAILED(store->GetValue(key, &value))) {
+            Step(L"FAIL: GetAt/GetValue at %lu", i);
+            code = 1;
+            break;
+        }
+        wchar_t text[256] = L"";
+        PSFormatForDisplay(key, value, PDFF_DEFAULT, text, ARRAYSIZE(text));
+        wchar_t fmtid[64] = L"";
+        StringFromGUID2(key.fmtid, fmtid, ARRAYSIZE(fmtid));
+        Step(L"[%lu] %s pid=%u = %s (vt=0x%04X)", i, fmtid, key.pid, text, value.vt);
+        PropVariantClear(&value);
+    }
+    if (count == 0) {
+        Step(L"WARN: no properties (parse failed or unknown format)");
+        code = 1;
+    }
+
+    // 未提供键一律 VT_EMPTY（解析失败时全部如此）
+    PROPVARIANT absent = {};
+    hr = store->GetValue(PKEY_Image_Compression, &absent);
+    Step(L"GetValue(PKEY_Image_Compression) hr=0x%08lX vt=0x%04X (expect VT_EMPTY)",
+         static_cast<unsigned long>(hr), absent.vt);
+    if (absent.vt != VT_EMPTY) {
+        Step(L"FAIL: absent key must be VT_EMPTY");
+        code = 1;
+    }
+    PropVariantClear(&absent);
+
+    // 只读契约
+    PROPVARIANT write = {};
+    write.vt = VT_UI4;
+    write.uintVal = 0;
+    const HRESULT setHr = store->SetValue(PKEY_Image_HorizontalSize, write);
+    const HRESULT commitHr = store->Commit();
+    const HRESULT writableHr = capabilities->IsPropertyWritable(PKEY_Image_HorizontalSize);
+    Step(L"SetValue hr=0x%08lX Commit hr=0x%08lX IsPropertyWritable hr=0x%08lX (expect fail/fail/S_FALSE)",
+         static_cast<unsigned long>(setHr), static_cast<unsigned long>(commitHr),
+         static_cast<unsigned long>(writableHr));
+    if (SUCCEEDED(setHr) || SUCCEEDED(commitHr) || writableHr != S_FALSE) {
+        Step(L"FAIL: store must be read-only");
+        code = 1;
+    }
+
+    // 复用契约：重新 Initialize 后可再查（缓存随 Initialize 重置）
+    hr = fileInit->Initialize(opt.slide.c_str(), STGM_READ);
+    PROPVARIANT again = {};
+    const HRESULT againHr = SUCCEEDED(hr) ? store->GetValue(PKEY_Image_HorizontalSize, &again) : E_FAIL;
+    Step(L"re-Initialize + GetValue hr=0x%08lX vt=0x%04X", static_cast<unsigned long>(againHr),
+         again.vt);
+    if (FAILED(hr) || FAILED(againHr)) code = 1;
+    PropVariantClear(&again);
+
+    capabilities->Release();
+    store->Release();
+    fileInit->Release();
+    return code;
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -386,8 +530,8 @@ int wmain(int argc, wchar_t** argv) {
     const Options opt = ParseOptions(argc, argv);
     const ULONGLONG startTick = GetTickCount64();
 
-    Step(L"slide: %s (mode=%ls size=%u)", opt.slide.c_str(), opt.preview ? L"preview" : L"thumbnail",
-         opt.size);
+    Step(L"slide: %s (mode=%ls size=%u)", opt.slide.c_str(),
+         opt.preview ? L"preview" : opt.props ? L"props" : L"thumbnail", opt.size);
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Step(L"CoInitializeEx(STA) hr=0x%08lX", static_cast<unsigned long>(hr));
@@ -425,7 +569,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     const int code = opt.preview ? RunPreviewFlow(getClassObject, opt)
-                                 : RunThumbnailFlow(getClassObject, opt);
+                                 : opt.props ? RunPropsFlow(getClassObject, opt)
+                                             : RunThumbnailFlow(getClassObject, opt);
 
     if (code == 0) {
         const auto canUnload = reinterpret_cast<HRESULT (STDMETHODCALLTYPE*)()>(

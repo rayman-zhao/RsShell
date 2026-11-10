@@ -2,7 +2,8 @@
 
 Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及后续 Rs 系应用），
 当前产物：`Explorer/build/Release/RsShell.Explorer.dll`——资源管理器右键菜单 verb
-（IExplorerCommand）与数字切片缩略图（IExtractImage）。
+（IExplorerCommand）、数字切片缩略图（IExtractImage）、预览窗格（IPreviewHandler）
+与属性处理器（IPropertyStore，详情列/属性对话框/搜索索引）。
 
 ## 定位与边界
 
@@ -25,6 +26,12 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
     理）；仅格式无宏图时失败；
   - `RsSlideThumbnail`：金字塔层缩略图 JPEG（需完整解析切片，~20s 慢路）；保留导出
     备将来使用，RsShell 当前不调用（同步调必超 surrogate 预算）。
+  - `RsSlideInfo`：切片技术元数据（属性处理器用）——单块 CoTaskMem 缓冲 =
+    纯数值定长头（宽高/位深/层数/mpp/倍率/tierCount/瓦片宽高/瓦片压缩 0=jpeg
+    1=png 2=jxl/瓦片像素格式 1=gray 3=rgb，description 由消费侧从枚举组合重建）。
+    keywordCount 保留 ABI 槽位、恒 0：channelTrait 默认染色名（H&E）不完全正确，
+    无可靠染色来源不输出（将来启用也**严禁掺 ImageDescription 原文，内含患者
+    信息**）。一次 makeSlide 纯标签遍历、不解码像素。
   Extract 同步直调 previewBitmap→CreateDIBSection 返回（实测 <0.3s，首访即出图；
   不借道主应用出图）。Swift 运行时随消费方包分发（build-msix.ps1 步骤 7 平铺包根）。
   **注意**：依赖 RsPack 的 `TIFFReadRGBAStrip` 与 `tjDecompress`——推送顺序必须
@@ -49,6 +56,23 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
   + `LoadPackagedLibrary` 兜底链）。当年 "126 玄学" 的真因是 DLL 文件名拼错，加载
   失败先核对文件名。WindowsApps 内的 exe 只能被带包身份的进程（surrogate）启动，
   PowerShell 直跑会拒绝访问——测试用包根拷贝或 loose 注册。
+
+## 属性处理器（IPropertyStore，2026-11-10）
+
+- 挂接走消费方 FTA 的 `desktop2:DesktopPropertyHandler`（与缩略图/预览同类同级），
+  **勿用 `desktop2:SearchPropertyHandler`**——官方明示 1809 起对 Desktop Bridge 无效。
+- 初始化同款纪律：QI 只给 `IInitializeWithFile`（勿加 Stream/Item），Initialize 只存
+  路径、首次 GetValue 才懒解析并缓存（失败也缓存，退化为全 VT_EMPTY，基础文件属性
+  不受影响）；只读（IsPropertyWritable 恒 S_FALSE）。ThreadingModel=Both（索引器 MTA）。
+- 映射键刻意收窄：尺寸（H/V size，"尺寸"列系统自动合成）/分辨率（mpp→DPI，25400/mpp）
+  /备注摘要行（`20x · level×3 · tier×1 · JPEG_RGB_24bits · 512x512` 式，倍率+层数+tier 数+
+  TileTrait.description+瓦片尺寸塞 System.Comment——顺序即此，缺省段自然跳过；计数记法
+  统一 `名×N`，倍率沿用 `Nx` 单位后缀；**值是索引数据，统一英文/中立符号，勿按 UI
+  语言分支**）；自定义 propdesc
+  需机器级注册、MSIX 带不了，染色关键词无可靠来源暂不输出。**患者/标本字段禁入**——
+  入属性系统即进全机可搜的 Windows Search 索引库。
+- 真机待验（无先例项）：索引器是否吃到包注册的 handler（属性入索引可搜）、
+  `.tif`（image 模板）与私有扩展（generic 模板）详情页版式差异。
 
 ## 构建与约定
 
