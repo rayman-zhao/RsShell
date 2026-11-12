@@ -71,8 +71,7 @@ Windows Shell 集成层，VC++（MSVC）COM DLL 宿主。服务于 Ruslan（及�
   语言分支**）；自定义 propdesc
   需机器级注册、MSIX 带不了，染色关键词无可靠来源暂不输出。**患者/标本字段禁入**——
   入属性系统即进全机可搜的 Windows Search 索引库。
-- 真机待验（无先例项）：索引器是否吃到包注册的 handler（属性入索引可搜）、
-  `.tif`（image 模板）与私有扩展（generic 模板）详情页版式差异。
+- **平台终审（2026-11-12，26200 25H2 + 26300 双机实测）：`desktop2:DesktopPropertyHandler` 无运行时消费者，纸面功能**——属性查询（ExtendedProperty/详情列）期间 propsys 从不 CoCreate 包注册的 handler（全程无 surrogate 加载我们的 DLL），详情恒空；与打包方式（Store/dev 松散）、UserChoice 指向、DPI 缩放均无关（逐项排除）。旁证：全机生态扫描无一包使用该元素；官方文档（2018/2021）只讲经典注册、对打包场景只字未提。代码休眠保留（ThumbTest --props 全过，平台若接通即活）；FTA 声明元素保留为惰性期权。**若将来平台接活**：索引器隔离模型按文档要求 IInitializeWithStream（无 Stream 须注册表 DisableProcessIsolation=1 退出，manifest 无对应属性）——届时补开 IInitializeWithItem（IShellItem→SIGDN_FILESYSPATH 取全路径）优先；勿走 IStream::Stat 取路径（缩略图调研实测 Shell 给的流只返回裸文件名）。同因连坐：`.tif`/私有扩展详情页版式差异验证 moot。
 
 ## 构建与约定
 
