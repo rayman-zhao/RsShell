@@ -17,6 +17,7 @@ set_target_properties(RsShell.Explorer PROPERTIES
 
 target_compile_definitions(RsShell.Explorer PRIVATE
     _WIN32_WINNT=0x0A00
+    NTDDI_VERSION=0x0A000004  # RS4=17763，消费方 MinVersion 基线；露出 1607+ DPI API
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     UNICODE
@@ -44,6 +45,7 @@ set_target_properties(RsShell.ThumbTest PROPERTIES
 
 target_compile_definitions(RsShell.ThumbTest PRIVATE
     _WIN32_WINNT=0x0A00
+    NTDDI_VERSION=0x0A000004
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     UNICODE

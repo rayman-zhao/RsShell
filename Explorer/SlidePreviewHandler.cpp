@@ -24,25 +24,18 @@ HINSTANCE ModuleInstance() {
 // COM surrogate 默认 DPI-unaware，而宿主 Explorer（PerMonitorV2）传入的 SetRect 是
 // 物理像素：200% 缩放实机上 unaware 子窗的画面被 DWM 整体放大 2 倍，恰好只剩窗格
 // 左上四分之一可见。窗口的 DPI 上下文在创建瞬间取自创建线程，故此处须临时切换。
-HANDLE (WINAPI* g_setThreadDpiContext)(HANDLE) = [] {
-    const HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    return user32 ? reinterpret_cast<HANDLE (WINAPI*)(HANDLE)>(
-                        GetProcAddress(user32, "SetThreadDpiAwarenessContext"))
-                  : nullptr;
-}();
-const HANDLE kPerMonitorAwareV2 = reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4));
-
 class ThreadDpiScope {
    public:
     ThreadDpiScope() {
-        if (g_setThreadDpiContext) restore_ = g_setThreadDpiContext(kPerMonitorAwareV2);
+        restore_ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     ~ThreadDpiScope() {
-        if (restore_) g_setThreadDpiContext(restore_);
+        if (restore_) SetThreadDpiAwarenessContext(restore_);
     }
 
    private:
-    HANDLE restore_ = nullptr;
+    // 返回值 -1/-2 是合法旧上下文（UNAWARE/SYSTEM_AWARE），仅 nullptr 表示切换失败
+    DPI_AWARENESS_CONTEXT restore_ = nullptr;
 };
 
 }  // namespace

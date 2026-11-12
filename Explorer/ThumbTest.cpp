@@ -529,9 +529,7 @@ int wmain(int argc, wchar_t** argv) {
 
     // 对齐 Explorer 宿主的 PerMonitorV2：预览子窗按物理像素建窗后，unaware 的替身
     // 宿主会在高 DPI 屏上被 DWM 反向放大，混挂出错误布局
-    if (const auto setCtx = reinterpret_cast<HANDLE (WINAPI*)(HANDLE)>(
-            GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetProcessDpiAwarenessContext")))
-        setCtx(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4)));
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     const Options opt = ParseOptions(argc, argv);
     const ULONGLONG startTick = GetTickCount64();
