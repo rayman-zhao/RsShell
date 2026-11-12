@@ -21,6 +21,30 @@ HINSTANCE ModuleInstance() {
     return instance;
 }
 
+// COM surrogate 默认 DPI-unaware，而宿主 Explorer（PerMonitorV2）传入的 SetRect 是
+// 物理像素：200% 缩放实机上 unaware 子窗的画面被 DWM 整体放大 2 倍，恰好只剩窗格
+// 左上四分之一可见。窗口的 DPI 上下文在创建瞬间取自创建线程，故此处须临时切换。
+HANDLE (WINAPI* g_setThreadDpiContext)(HANDLE) = [] {
+    const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    return user32 ? reinterpret_cast<HANDLE (WINAPI*)(HANDLE)>(
+                        GetProcAddress(user32, "SetThreadDpiAwarenessContext"))
+                  : nullptr;
+}();
+const HANDLE kPerMonitorAwareV2 = reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4));
+
+class ThreadDpiScope {
+   public:
+    ThreadDpiScope() {
+        if (g_setThreadDpiContext) restore_ = g_setThreadDpiContext(kPerMonitorAwareV2);
+    }
+    ~ThreadDpiScope() {
+        if (restore_) g_setThreadDpiContext(restore_);
+    }
+
+   private:
+    HANDLE restore_ = nullptr;
+};
+
 }  // namespace
 
 STDMETHODIMP SlidePreviewHandler::QueryInterface(REFIID riid, void** ppv) {
@@ -103,6 +127,7 @@ STDMETHODIMP SlidePreviewHandler::DoPreview() {
     const LONG spanW = m_rect.right - m_rect.left;
     const LONG spanH = m_rect.bottom - m_rect.top;
     EnsureWindowClass();
+    ThreadDpiScope dpi;  // 窗口 DPI 上下文取自创建线程，须为物理像素单位
     m_window = CreateWindowExW(0, kPreviewWindowClass, L"", WS_CHILD | WS_VISIBLE,
                                m_rect.left, m_rect.top, spanW, spanH, m_parent, nullptr,
                                ModuleInstance(), this);
