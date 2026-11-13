@@ -224,6 +224,8 @@ STDMETHODIMP SlidePreviewHandler::SetTextColor(COLORREF) { return S_OK; }
 
 void SlidePreviewHandler::ApplyBounds() {
     if (!m_window) return;
+    ThreadDpiScope dpi;  // SetWindowPos 坐标须与窗口同上下文（物理像素）：unaware 调用方
+                         // 的坐标会被按缩放换算——200% 实机拖窗/拖分隔线后子窗恰为窗格 2×
     SetWindowPos(m_window, nullptr, m_rect.left, m_rect.top, m_rect.right - m_rect.left,
                  m_rect.bottom - m_rect.top, SWP_NOACTIVATE | SWP_NOZORDER);
     InvalidateRect(m_window, nullptr, FALSE);
