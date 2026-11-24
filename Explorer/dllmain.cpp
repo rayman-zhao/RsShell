@@ -85,4 +85,17 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
 
 STDAPI DllCanUnloadNow() { return g_moduleLocks == 0 ? S_OK : S_FALSE; }
 
-BOOL APIENTRY DllMain(HMODULE, DWORD, LPVOID) { return TRUE; }
+// 进程存活期间钉住自身（多持一个模块引用）：静态导入的 Foundation.dll（Swift 运行时）只在
+// FreeLibrary 触发的 DLL_PROCESS_DETACH 里 FlsFree，其 FLS 回调每次都会把槽位重新填回，
+// 而 ntdll 的 RtlpFlsFree 要扫到所有线程槽位为空才返回——互锁成死循环。COM surrogate 收尾
+// 时 CoUninitialize→FreeLibrary 必经此路：进程永不退出且满核自旋（6.4.2 实测；上游口径亦是
+// Swift DLL 不支持卸载）。钉住后卸载只剩进程终止路径（lpReserved≠NULL），Foundation 在该
+// 路径不做这项清理。
+BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        HMODULE self = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                           reinterpret_cast<LPCWSTR>(&DllMain), &self);
+    }
+    return TRUE;
+}
